@@ -1,0 +1,72 @@
+# TradeDash .gitignore
+# Node / Vite / React / TypeScript defaults + local artifacts
+
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Build output
+dist/
+dist-ssr/
+
+# Vite cache
+.vite/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Runtime / PID files
+*.pid
+*.pid.lock
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+*.swp
+
+# Env files (keep examples)
+.env
+.env.*
+!.env.example
+
+# Test / coverage
+coverage/
+*.lcov
+
+# TypeScript
+*.tsbuildinfo
+
+# Lint/format caches
+.eslintcache
+.prettiercache
+
+# Misc tooling
+.turbo/
+.parcel-cache/
+.cache/
+
+# Deployment/vendor
+.vercel/
+.netlify/
+
+# Local/irrelevant repo artifacts
+null
+*.local
+
+# Agent artifacts
+.agent-*.log
+.agent-summary.md
