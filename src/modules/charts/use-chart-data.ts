@@ -131,6 +131,7 @@ function aggregateCandles(
 function createAggregatedCandle(candles: CandleData[]): CandleData {
   const firstCandle = candles[0];
   const lastCandle = candles[candles.length - 1];
+  const totalVolume = candles.reduce((sum, c) => sum + (c.volume ?? 0), 0);
 
   return {
     time: lastCandle.time,
@@ -138,6 +139,7 @@ function createAggregatedCandle(candles: CandleData[]): CandleData {
     high: Math.max(...candles.map((c) => c.high)),
     low: Math.min(...candles.map((c) => c.low)),
     close: lastCandle.close,
+    volume: totalVolume > 0 ? totalVolume : undefined,
   };
 }
 
@@ -151,6 +153,7 @@ function normalizeToCandleData(candle: NormalizedCandle): CandleData {
     high: candle.high,
     low: candle.low,
     close: candle.close,
+    volume: candle.volume,
   };
 }
 
@@ -189,6 +192,7 @@ async function fetchHistoricalKlines(
       high: parseFloat(k[2]),
       low: parseFloat(k[3]),
       close: parseFloat(k[4]),
+      volume: parseFloat(k[5]),
     }));
   } catch {
     return [];

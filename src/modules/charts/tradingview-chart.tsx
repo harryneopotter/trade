@@ -5,18 +5,22 @@ import {
   createChart,
   CandlestickSeries,
   LineSeries,
+  HistogramSeries,
   type IChartApi,
   type ISeriesApi,
   type CandlestickData,
   type LineData,
+  type HistogramData,
   type Time,
   CrosshairMode,
 } from 'lightweight-charts';
 import type { Timeframe } from '../../lib/stores/types';
+import { useChartStore } from '../../lib/stores/chart-store';
 import { useChartData } from './use-chart-data';
 import { ChartHeader } from './chart-header';
 import { HorizontalLineManager } from './horizontal-line-manager';
 import { LineContextMenu } from './line-controls';
+import { ChangeSymbolModal } from './change-symbol-modal';
 import type { HorizontalLineData } from './types';
 
 interface TradingViewChartProps {
@@ -27,8 +31,16 @@ interface TradingViewChartProps {
   showEMA21: boolean;
 }
 
+// ── Module-level crosshair sync ──────────────────────────────────────────────
+// Each chart registers a callback; when one chart moves its crosshair the
+// others receive the new time and snap their own crosshair to it.
+const crosshairSyncCallbacks = new Map<number, (time: Time | null) => void>();
+
+// ── Component ────────────────────────────────────────────────────────────────
+
 /**
- * Individual TradingView chart with candlesticks, EMAs, and horizontal lines
+ * Individual TradingView chart with candlesticks, EMAs, volume, and horizontal
+ * price lines. Supports crosshair synchronisation across all 4 chart slots.
  */
 export function TradingViewChart({
   chartIndex,
@@ -37,14 +49,18 @@ export function TradingViewChart({
   showEMA9,
   showEMA21,
 }: TradingViewChartProps) {
+  const { setChartSymbol } = useChartStore();
+
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const ema9SeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const ema21SeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
 
   const [priceChange, setPriceChange] = useState<number>(0);
   const [showShiftHint, setShowShiftHint] = useState(false);
+  const [showSymbolModal, setShowSymbolModal] = useState(false);
   const [contextMenu, setContextMenu] = useState<{
     visible: boolean;
     position: { x: number; y: number };
@@ -62,7 +78,6 @@ export function TradingViewChart({
     value: string;
   }>({ visible: false, line: null, value: '' });
 
-  // Line manager ref
   const lineManagerRef = useRef<HorizontalLineManager | null>(null);
   const isShiftPressedRef = useRef(false);
 
@@ -81,11 +96,10 @@ export function TradingViewChart({
     clearAllHorizontalLines,
   } = useChartData(symbol, timeframe);
 
-  // Initialize chart
+  // ── Chart initialisation ──────────────────────────────────────────────────
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
-    // Create chart instance
     const chart = createChart(chartContainerRef.current, {
       layout: {
         background: { color: '#0f172a' },
@@ -112,11 +126,9 @@ export function TradingViewChart({
     });
 
     chartRef.current = chart;
-
-    // Initialize line manager
     lineManagerRef.current = new HorizontalLineManager(chart);
 
-    // Create candlestick series using v5 API
+    // Candlestick series
     const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: '#22c55e',
       downColor: '#ef4444',
@@ -125,10 +137,19 @@ export function TradingViewChart({
       wickUpColor: '#22c55e',
       wickDownColor: '#ef4444',
     });
-
     candleSeriesRef.current = candleSeries;
 
-    // Create EMA series using v5 API
+    // Volume histogram (separate price scale — bottom 25 % of chart)
+    const volumeSeries = chart.addSeries(HistogramSeries, {
+      priceFormat: { type: 'volume' },
+      priceScaleId: 'volume',
+    });
+    volumeSeries.priceScale().applyOptions({
+      scaleMargins: { top: 0.75, bottom: 0 },
+    });
+    volumeSeriesRef.current = volumeSeries;
+
+    // EMA line series
     const ema9Series = chart.addSeries(LineSeries, {
       color: '#3b82f6',
       lineWidth: 2,
@@ -145,64 +166,81 @@ export function TradingViewChart({
     });
     ema21SeriesRef.current = ema21Series;
 
-    // Handle resize
+    // Resize handler
     const handleResize = () => {
       if (chartContainerRef.current && chartRef.current) {
         const { width, height } =
           chartContainerRef.current.getBoundingClientRect();
-        chartRef.current.applyOptions({
-          width,
-          height,
-        });
+        chartRef.current.applyOptions({ width, height });
       }
     };
-
     handleResize();
     window.addEventListener('resize', handleResize);
 
-    // Handle Shift+Click for adding horizontal lines
+    // Shift+Click → add horizontal line
     const handleClick = (param: {
       point?: { x: number; y: number };
       time?: Time;
     }) => {
-      if (!isShiftPressedRef.current || !chartRef.current || !param.point)
-        return;
-
+      if (!isShiftPressedRef.current || !param.point) return;
       const cs = candleSeriesRef.current;
       if (!cs) return;
-
       const price = cs.coordinateToPrice(param.point.y);
       if (price !== null && price !== undefined) {
         void addHorizontalLine(price);
       }
     };
-
     chart.subscribeClick(handleClick);
 
-    // Track Shift key state
+    // Shift key tracking
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Shift') {
         isShiftPressedRef.current = true;
         setShowShiftHint(true);
       }
     };
-
     const handleKeyUp = (e: KeyboardEvent) => {
       if (e.key === 'Shift') {
         isShiftPressedRef.current = false;
         setShowShiftHint(false);
       }
     };
-
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
 
-    // Cleanup
+    // ── Crosshair sync ───────────────────────────────────────────────────────
+    // Broadcast this chart's crosshair position to all other registered charts
+    const handleCrosshairMove = (param: {
+      time?: Time;
+      point?: { x: number; y: number };
+    }) => {
+      const time = param.time ?? null;
+      crosshairSyncCallbacks.forEach((cb, idx) => {
+        if (idx !== chartIndex) cb(time);
+      });
+    };
+    chart.subscribeCrosshairMove(handleCrosshairMove);
+
+    // Receive crosshair time from other charts and snap ours to it
+    const receiveCrosshair = (time: Time | null) => {
+      const cs = candleSeriesRef.current;
+      const ch = chartRef.current;
+      if (!ch || !cs) return;
+      if (time === null) {
+        ch.clearCrosshairPosition();
+      } else {
+        ch.setCrosshairPosition(0, time, cs);
+      }
+    };
+    crosshairSyncCallbacks.set(chartIndex, receiveCrosshair);
+
     return () => {
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       chart.unsubscribeClick(handleClick);
+      chart.unsubscribeCrosshairMove(handleCrosshairMove);
+      crosshairSyncCallbacks.delete(chartIndex);
 
       lineManagerRef.current?.dispose();
       lineManagerRef.current = null;
@@ -212,10 +250,11 @@ export function TradingViewChart({
       candleSeriesRef.current = null;
       ema9SeriesRef.current = null;
       ema21SeriesRef.current = null;
+      volumeSeriesRef.current = null;
     };
-  }, [addHorizontalLine]);
+  }, [addHorizontalLine, chartIndex]);
 
-  // Update candle data
+  // ── Candle data ───────────────────────────────────────────────────────────
   useEffect(() => {
     if (!candleSeriesRef.current || candles.length === 0) return;
 
@@ -226,25 +265,37 @@ export function TradingViewChart({
       low: c.low,
       close: c.close,
     }));
-
     candleSeriesRef.current.setData(chartData);
 
     if (candles.length >= 2) {
-      const firstCandle = candles[0];
-      const lastCandle = candles[candles.length - 1];
-      const change =
-        ((lastCandle.close - firstCandle.open) / firstCandle.open) * 100;
-      const rafId = requestAnimationFrame(() => {
-        setPriceChange(change);
-      });
+      const first = candles[0];
+      const last = candles[candles.length - 1];
+      const change = ((last.close - first.open) / first.open) * 100;
+      const rafId = requestAnimationFrame(() => setPriceChange(change));
       return () => cancelAnimationFrame(rafId);
     }
   }, [candles]);
 
-  // Update EMA 9
+  // ── Volume bars ───────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!volumeSeriesRef.current || candles.length === 0) return;
+
+    const volData: HistogramData[] = candles
+      .filter((c) => c.volume !== undefined)
+      .map((c) => ({
+        time: c.time as Time,
+        value: c.volume as number,
+        color: c.close >= c.open ? '#22c55e55' : '#ef444455',
+      }));
+
+    if (volData.length > 0) {
+      volumeSeriesRef.current.setData(volData);
+    }
+  }, [candles]);
+
+  // ── EMA 9 ─────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!ema9SeriesRef.current) return;
-
     if (showEMA9 && ema9.length > 0) {
       const lineData: LineData[] = ema9.map((d) => ({
         time: d.time as Time,
@@ -256,10 +307,9 @@ export function TradingViewChart({
     }
   }, [ema9, showEMA9]);
 
-  // Update EMA 21
+  // ── EMA 21 ────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!ema21SeriesRef.current) return;
-
     if (showEMA21 && ema21.length > 0) {
       const lineData: LineData[] = ema21.map((d) => ({
         time: d.time as Time,
@@ -271,53 +321,41 @@ export function TradingViewChart({
     }
   }, [ema21, showEMA21]);
 
-  // Update horizontal lines using line manager
+  // ── Horizontal lines ──────────────────────────────────────────────────────
   useEffect(() => {
     if (!lineManagerRef.current || candles.length === 0) return;
-
     const timeRange = {
       start: candles[0].time,
       end: candles[candles.length - 1].time,
     };
-
     lineManagerRef.current.syncLines(horizontalLines, timeRange);
   }, [horizontalLines, candles]);
 
-  // ── Line callbacks ──────────────────────────────────────────────────────────
+  // ── Line callbacks ────────────────────────────────────────────────────────
   const handleAddLine = useCallback(
-    (price: number, color?: string) => {
-      void addHorizontalLine(price, color);
-    },
+    (price: number, color?: string) => void addHorizontalLine(price, color),
     [addHorizontalLine]
   );
-
   const handleRemoveLine = useCallback(
-    (id: string) => {
-      void removeHorizontalLine(id);
-    },
+    (id: string) => void removeHorizontalLine(id),
     [removeHorizontalLine]
   );
-
   const handleUpdateLine = useCallback(
-    (id: string, updates: { price?: number; color?: string }) => {
-      void updateHorizontalLine(id, updates);
-    },
+    (id: string, updates: { price?: number; color?: string }) =>
+      void updateHorizontalLine(id, updates),
     [updateHorizontalLine]
   );
+  const handleClearAllLines = useCallback(
+    () => void clearAllHorizontalLines(),
+    [clearAllHorizontalLines]
+  );
 
-  const handleClearAllLines = useCallback(() => {
-    void clearAllHorizontalLines();
-  }, [clearAllHorizontalLines]);
+  // ── Context menu ──────────────────────────────────────────────────────────
+  const hideContextMenu = useCallback(
+    () => setContextMenu((p) => ({ ...p, visible: false })),
+    []
+  );
 
-  // ── Context menu ────────────────────────────────────────────────────────────
-  const hideContextMenu = useCallback(() => {
-    setContextMenu((prev) => ({ ...prev, visible: false }));
-  }, []);
-
-  /**
-   * Right-click on chart: find the nearest horizontal line within 2% price
-   * tolerance and show the context menu for it.
-   */
   const handleContextMenu = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       e.preventDefault();
@@ -325,24 +363,21 @@ export function TradingViewChart({
 
       const rect = chartContainerRef.current.getBoundingClientRect();
       const y = e.clientY - rect.top;
-
       const price = candleSeriesRef.current.coordinateToPrice(y);
       if (price === null || price === undefined) return;
 
-      // Find the closest horizontal line
       let closestLine: HorizontalLineData | null = null;
-      let minDistance = Infinity;
+      let minDist = Infinity;
       for (const line of horizontalLines) {
-        const dist = Math.abs(line.price - price);
-        if (dist < minDistance) {
-          minDistance = dist;
+        const d = Math.abs(line.price - price);
+        if (d < minDist) {
+          minDist = d;
           closestLine = line;
         }
       }
 
-      // Only show context menu when click is within 2 % of the line price
       const tolerance = Math.abs(price) * 0.02;
-      if (closestLine && minDistance <= tolerance) {
+      if (closestLine && minDist <= tolerance) {
         setContextMenu({
           visible: true,
           position: { x: e.clientX - rect.left, y: e.clientY - rect.top },
@@ -353,17 +388,15 @@ export function TradingViewChart({
     [horizontalLines]
   );
 
-  // ── Edit price modal ────────────────────────────────────────────────────────
+  // ── Edit price modal ──────────────────────────────────────────────────────
   const handleEditLine = useCallback((line: HorizontalLineData) => {
     setEditModal({ visible: true, line, value: String(line.price) });
   }, []);
 
   const handleEditConfirm = useCallback(() => {
     if (!editModal.line) return;
-    const newPrice = parseFloat(editModal.value);
-    if (!isNaN(newPrice) && newPrice > 0) {
-      handleUpdateLine(editModal.line.id, { price: newPrice });
-    }
+    const p = parseFloat(editModal.value);
+    if (!isNaN(p) && p > 0) handleUpdateLine(editModal.line.id, { price: p });
     setEditModal({ visible: false, line: null, value: '' });
   }, [editModal, handleUpdateLine]);
 
@@ -376,13 +409,21 @@ export function TradingViewChart({
     [handleEditConfirm]
   );
 
-  // ── Header callbacks (settings / close are Phase B) ────────────────────────
+  // ── Symbol change ─────────────────────────────────────────────────────────
   const handleSettingsClick = useCallback(() => {
-    // Phase B: open chart settings modal
+    setShowSymbolModal(true);
   }, []);
 
+  const handleSymbolConfirm = useCallback(
+    (newSymbol: string) => {
+      void setChartSymbol(chartIndex, newSymbol);
+      setShowSymbolModal(false);
+    },
+    [chartIndex, setChartSymbol]
+  );
+
   const handleCloseClick = useCallback(() => {
-    // Phase B: allow swapping chart symbol
+    setShowSymbolModal(true);
   }, []);
 
   return (
@@ -432,7 +473,7 @@ export function TradingViewChart({
                 className="text-sm"
                 style={{ color: 'var(--text-secondary)' }}
               >
-                Loading...
+                Loading…
               </span>
             </div>
           </div>
@@ -534,7 +575,7 @@ export function TradingViewChart({
                 autoFocus
                 value={editModal.value}
                 onChange={(e) =>
-                  setEditModal((prev) => ({ ...prev, value: e.target.value }))
+                  setEditModal((p) => ({ ...p, value: e.target.value }))
                 }
                 onKeyDown={handleEditKeyDown}
                 className="w-full px-3 py-2 text-sm rounded border focus:outline-none focus:ring-1 mb-3"
@@ -549,7 +590,7 @@ export function TradingViewChart({
                   onClick={() =>
                     setEditModal({ visible: false, line: null, value: '' })
                   }
-                  className="px-3 py-1.5 text-sm rounded transition-colors"
+                  className="px-3 py-1.5 text-sm rounded"
                   style={{
                     backgroundColor: 'var(--bg-tertiary)',
                     color: 'var(--text-secondary)',
@@ -559,7 +600,7 @@ export function TradingViewChart({
                 </button>
                 <button
                   onClick={handleEditConfirm}
-                  className="px-3 py-1.5 text-sm rounded transition-colors"
+                  className="px-3 py-1.5 text-sm rounded"
                   style={{
                     backgroundColor: 'var(--accent-primary)',
                     color: '#ffffff',
@@ -572,6 +613,15 @@ export function TradingViewChart({
           </div>
         )}
       </div>
+
+      {/* Change Symbol Modal */}
+      {showSymbolModal && (
+        <ChangeSymbolModal
+          currentSymbol={symbol}
+          onConfirm={handleSymbolConfirm}
+          onClose={() => setShowSymbolModal(false)}
+        />
+      )}
     </div>
   );
 }
