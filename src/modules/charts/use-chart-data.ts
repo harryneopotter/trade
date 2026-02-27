@@ -4,13 +4,13 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type { Timeframe } from '../../lib/stores/types';
 import type { CandleData, LineData, HorizontalLineData } from './types';
 import { useWebSocket } from '../../lib/data/use-websocket';
-import { DataService } from '../../lib/data/data-service';
 import type { NormalizedCandle } from '../../lib/data/types';
 import {
   getLines,
   addLine,
   updateLine,
   removeLine,
+  removeAllLines,
 } from '../../lib/storage/lines-storage';
 
 // Timeframe to minutes mapping for aggregation
@@ -23,6 +23,12 @@ const TIMEFRAME_MINUTES: Record<Timeframe, number> = {
 
 // Base timeframe for WebSocket subscription (lowest granularity)
 const BASE_TIMEFRAME: Timeframe = '15m';
+
+// Binance interval string for REST API
+const BINANCE_INTERVAL = '15m';
+
+// How many base candles to prefetch from Binance REST API on mount
+const HISTORY_LIMIT = 500;
 
 /**
  * Calculate EMA values from candle data
@@ -149,6 +155,47 @@ function normalizeToCandleData(candle: NormalizedCandle): CandleData {
 }
 
 /**
+ * Merge historical candles with a live update candle.
+ * Replaces the last candle if it has the same timestamp, otherwise appends.
+ * Keeps array sorted by time.
+ */
+function mergeCandle(base: CandleData[], live: CandleData): CandleData[] {
+  if (base.length === 0) return [live];
+  const last = base[base.length - 1];
+  if (last.time === live.time) {
+    return [...base.slice(0, -1), live];
+  }
+  return [...base, live];
+}
+
+/**
+ * Fetch historical klines from Binance Futures REST API.
+ * Returns an empty array on network failure (non-fatal).
+ */
+async function fetchHistoricalKlines(
+  symbol: string,
+  interval: string,
+  limit: number
+): Promise<CandleData[]> {
+  try {
+    const url = `https://fapi.binance.com/fapi/v1/klines?symbol=${symbol.toUpperCase()}&interval=${interval}&limit=${limit}`;
+    const res = await fetch(url);
+    if (!res.ok) return [];
+
+    const data: any[] = await res.json();
+    return data.map((k) => ({
+      time: Math.floor(k[0] / 1000) as number,
+      open: parseFloat(k[1]),
+      high: parseFloat(k[2]),
+      low: parseFloat(k[3]),
+      close: parseFloat(k[4]),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Hook for managing chart data including candles, EMAs, and horizontal lines
  */
 export function useChartData(
@@ -168,9 +215,10 @@ export function useChartData(
     id: string,
     updates: { price?: number; color?: string }
   ) => Promise<void>;
+  clearAllHorizontalLines: () => Promise<void>;
   refreshLines: () => Promise<void>;
 } {
-  const { subscribe, unsubscribe, getCandles } = useWebSocket();
+  const { subscribe, unsubscribe, candleData } = useWebSocket();
 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -178,26 +226,17 @@ export function useChartData(
     []
   );
   const [currentPrice, setCurrentPrice] = useState<number | null>(null);
-  const [rawCandles, setRawCandles] = useState<CandleData[]>([]);
 
-  // Use refs to track mounted state and prevent memory leaks
+  // Historical candles fetched from REST on mount
+  const [historicalCandles, setHistoricalCandles] = useState<CandleData[]>([]);
+
+  // Use a ref to track mounted state
   const isMountedRef = useRef(true);
-  const subscriptionRef = useRef<{
-    symbol: string;
-    timeframe: Timeframe;
-  } | null>(null);
 
-  // Subscribe to WebSocket data on mount and when symbol/timeframe changes
+  // ── WebSocket subscription ─────────────────────────────────────────────────
   useEffect(() => {
     isMountedRef.current = true;
 
-    // Use requestAnimationFrame to avoid synchronous setState in effect
-    const rafId = requestAnimationFrame(() => {
-      setIsLoading(true);
-      setError(null);
-    });
-
-    // Subscribe to base timeframe for data
     const subscription = {
       symbol: symbol.toUpperCase(),
       type: 'candle' as const,
@@ -205,61 +244,72 @@ export function useChartData(
       source: 'binance' as const,
     };
 
-    subscriptionRef.current = { symbol, timeframe };
     subscribe(subscription);
-
-    // Load initial data from cache
-    const loadInitialData = () => {
-      try {
-        const cachedCandles = DataService.getCandlesFromCache(
-          symbol.toUpperCase(),
-          BASE_TIMEFRAME
-        );
-
-        if (cachedCandles.length > 0 && isMountedRef.current) {
-          const candleData = cachedCandles.map(normalizeToCandleData);
-          setRawCandles(candleData);
-          setIsLoading(false);
-        }
-      } catch (err) {
-        console.error('Failed to load cached data:', err);
-      }
-    };
-
-    loadInitialData();
-
-    // Simulate loading complete after a timeout if no data arrives
-    const loadingTimeout = setTimeout(() => {
-      if (isMountedRef.current) {
-        setIsLoading(false);
-      }
-    }, 3000);
 
     return () => {
       isMountedRef.current = false;
-      cancelAnimationFrame(rafId);
-      clearTimeout(loadingTimeout);
       unsubscribe(subscription);
     };
-  }, [symbol, timeframe, subscribe, unsubscribe]);
+  }, [symbol, subscribe, unsubscribe]);
 
-  // Poll for new candle data from WebSocket
+  // ── Historical klines from REST API (on symbol change) ────────────────────
   useEffect(() => {
-    const intervalId = setInterval(() => {
-      const candles = getCandles(symbol.toUpperCase(), BASE_TIMEFRAME);
-      if (candles.length > 0) {
-        const candleData = candles.map(normalizeToCandleData);
-        setRawCandles(candleData);
+    let cancelled = false;
+
+    // Defer state resets to avoid synchronous setState inside effect body
+    const rafId = requestAnimationFrame(() => {
+      if (!cancelled) {
+        setIsLoading(true);
+        setHistoricalCandles([]);
       }
-    }, 1000);
+    });
 
-    return () => clearInterval(intervalId);
-  }, [getCandles, symbol]);
+    fetchHistoricalKlines(symbol, BINANCE_INTERVAL, HISTORY_LIMIT).then(
+      (candles) => {
+        if (!cancelled && isMountedRef.current) {
+          setHistoricalCandles(candles);
+          if (candles.length > 0) setIsLoading(false);
+        }
+      }
+    );
 
-  // Load horizontal lines from storage
+    // Fallback: stop loading spinner after 5 s even if no data
+    const t = setTimeout(() => {
+      if (!cancelled && isMountedRef.current) setIsLoading(false);
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafId);
+      clearTimeout(t);
+    };
+  }, [symbol]);
+
+  // ── Merge live WebSocket candles onto historical base ──────────────────────
+  const rawCandles = useMemo(() => {
+    // Start from the REST-fetched historical candles
+    let merged = historicalCandles;
+
+    // Find live candles for this symbol (base timeframe) from WS state
+    const live = candleData
+      .filter(
+        (c) =>
+          c.symbol === symbol.toUpperCase() && c.timeframe === BASE_TIMEFRAME
+      )
+      .sort((a, b) => a.timestamp - b.timestamp);
+
+    // Merge each live update into the historical base
+    for (const lc of live) {
+      merged = mergeCandle(merged, normalizeToCandleData(lc));
+    }
+
+    return merged;
+  }, [historicalCandles, candleData, symbol]);
+
+  // ── Load horizontal lines from storage ────────────────────────────────────
   const loadHorizontalLines = useCallback(async () => {
     try {
-      const lines = await getLines(symbol);
+      const lines = await getLines(symbol, timeframe);
       const lineData: HorizontalLineData[] = lines.map((line) => ({
         id: line.id,
         price: line.price,
@@ -269,33 +319,29 @@ export function useChartData(
     } catch (err) {
       console.error('Failed to load horizontal lines:', err);
     }
-  }, [symbol]);
+  }, [symbol, timeframe]);
 
-  // Load horizontal lines on mount and symbol change
   useEffect(() => {
-    // Use requestAnimationFrame to avoid synchronous setState in effect
     const rafId = requestAnimationFrame(() => {
       void loadHorizontalLines();
     });
-
     return () => cancelAnimationFrame(rafId);
   }, [loadHorizontalLines]);
 
-  // Add a horizontal line
+  // ── Line CRUD ──────────────────────────────────────────────────────────────
   const addHorizontalLine = useCallback(
     async (price: number, color?: string) => {
       try {
-        await addLine(symbol, price, color);
+        await addLine(symbol, timeframe, price, color);
         await loadHorizontalLines();
       } catch (err) {
         console.error('Failed to add horizontal line:', err);
         setError('Failed to add horizontal line');
       }
     },
-    [symbol, loadHorizontalLines]
+    [symbol, timeframe, loadHorizontalLines]
   );
 
-  // Remove a horizontal line
   const removeHorizontalLine = useCallback(
     async (id: string) => {
       try {
@@ -309,7 +355,6 @@ export function useChartData(
     [loadHorizontalLines]
   );
 
-  // Update a horizontal line
   const updateHorizontalLine = useCallback(
     async (id: string, updates: { price?: number; color?: string }) => {
       try {
@@ -323,29 +368,31 @@ export function useChartData(
     [loadHorizontalLines]
   );
 
-  // Aggregate candles if needed
-  const candles = useMemo(() => {
-    if (timeframe === BASE_TIMEFRAME) {
-      return rawCandles;
+  const clearAllHorizontalLines = useCallback(async () => {
+    try {
+      await removeAllLines(symbol, timeframe);
+      await loadHorizontalLines();
+    } catch (err) {
+      console.error('Failed to clear all horizontal lines:', err);
     }
+  }, [symbol, timeframe, loadHorizontalLines]);
+
+  // ── Aggregate to selected timeframe ───────────────────────────────────────
+  const candles = useMemo(() => {
+    if (timeframe === BASE_TIMEFRAME) return rawCandles;
     return aggregateCandles(rawCandles, timeframe, BASE_TIMEFRAME);
   }, [rawCandles, timeframe]);
 
-  // Calculate EMAs
-  const ema9 = useMemo(() => {
-    return calculateEMA(candles, 9);
-  }, [candles]);
+  // ── EMAs ──────────────────────────────────────────────────────────────────
+  const ema9 = useMemo(() => calculateEMA(candles, 9), [candles]);
+  const ema21 = useMemo(() => calculateEMA(candles, 21), [candles]);
 
-  const ema21 = useMemo(() => {
-    return calculateEMA(candles, 21);
-  }, [candles]);
-
-  // Update current price from latest candle using requestAnimationFrame
+  // ── Current price from latest candle ──────────────────────────────────────
   useEffect(() => {
     if (candles.length > 0) {
-      const latestCandle = candles[candles.length - 1];
+      const latest = candles[candles.length - 1];
       const rafId = requestAnimationFrame(() => {
-        setCurrentPrice(latestCandle.close);
+        setCurrentPrice(latest.close);
       });
       return () => cancelAnimationFrame(rafId);
     }
@@ -362,6 +409,7 @@ export function useChartData(
     addHorizontalLine,
     removeHorizontalLine,
     updateHorizontalLine,
+    clearAllHorizontalLines,
     refreshLines: loadHorizontalLines,
   };
 }

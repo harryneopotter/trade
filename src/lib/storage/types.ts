@@ -16,6 +16,7 @@ export interface WatchlistItem {
 export interface HorizontalLine {
   id: string;
   symbol: string;
+  timeframe?: string; // e.g. '15m', '1h', '4h', '8h' — optional for backward compat
   price: number;
   color: string;
   createdAt: number;

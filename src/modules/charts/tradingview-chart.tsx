@@ -55,6 +55,13 @@ export function TradingViewChart({
     line: null,
   });
 
+  // Edit-price modal state
+  const [editModal, setEditModal] = useState<{
+    visible: boolean;
+    line: HorizontalLineData | null;
+    value: string;
+  }>({ visible: false, line: null, value: '' });
+
   // Line manager ref
   const lineManagerRef = useRef<HorizontalLineManager | null>(null);
   const isShiftPressedRef = useRef(false);
@@ -71,6 +78,7 @@ export function TradingViewChart({
     addHorizontalLine,
     removeHorizontalLine,
     updateHorizontalLine,
+    clearAllHorizontalLines,
   } = useChartData(symbol, timeframe);
 
   // Initialize chart
@@ -149,10 +157,7 @@ export function TradingViewChart({
       }
     };
 
-    // Initial resize
     handleResize();
-
-    // Add resize listener
     window.addEventListener('resize', handleResize);
 
     // Handle Shift+Click for adding horizontal lines
@@ -163,14 +168,10 @@ export function TradingViewChart({
       if (!isShiftPressedRef.current || !chartRef.current || !param.point)
         return;
 
-      // For v5, we need to use the series to get price from coordinate
-      // Using the candle series to convert coordinate to price
-      const candleSeries = candleSeriesRef.current;
-      if (!candleSeries) return;
+      const cs = candleSeriesRef.current;
+      if (!cs) return;
 
-      // Get price from coordinate using the series price scale
-      const price = candleSeries.coordinateToPrice(param.point.y);
-
+      const price = cs.coordinateToPrice(param.point.y);
       if (price !== null && price !== undefined) {
         void addHorizontalLine(price);
       }
@@ -203,7 +204,6 @@ export function TradingViewChart({
       window.removeEventListener('keyup', handleKeyUp);
       chart.unsubscribeClick(handleClick);
 
-      // Dispose line manager
       lineManagerRef.current?.dispose();
       lineManagerRef.current = null;
 
@@ -229,7 +229,6 @@ export function TradingViewChart({
 
     candleSeriesRef.current.setData(chartData);
 
-    // Calculate price change from first to last candle using RAF
     if (candles.length >= 2) {
       const firstCandle = candles[0];
       const lastCandle = candles[candles.length - 1];
@@ -238,8 +237,6 @@ export function TradingViewChart({
       const rafId = requestAnimationFrame(() => {
         setPriceChange(change);
       });
-
-      // Cleanup RAF on effect cleanup
       return () => cancelAnimationFrame(rafId);
     }
   }, [candles]);
@@ -286,21 +283,7 @@ export function TradingViewChart({
     lineManagerRef.current.syncLines(horizontalLines, timeRange);
   }, [horizontalLines, candles]);
 
-  // Handle settings click
-  const handleSettingsClick = useCallback(() => {
-    // TODO: Open chart settings modal
-    // eslint-disable-next-line no-console
-    console.log('Settings clicked for chart', chartIndex);
-  }, [chartIndex]);
-
-  // Handle close click
-  const handleCloseClick = useCallback(() => {
-    // TODO: Remove chart or show placeholder
-    // eslint-disable-next-line no-console
-    console.log('Close clicked for chart', chartIndex);
-  }, [chartIndex]);
-
-  // Handle line operations from header
+  // ── Line callbacks ──────────────────────────────────────────────────────────
   const handleAddLine = useCallback(
     (price: number, color?: string) => {
       void addHorizontalLine(price, color);
@@ -323,14 +306,83 @@ export function TradingViewChart({
   );
 
   const handleClearAllLines = useCallback(() => {
-    horizontalLines.forEach((line) => {
-      void removeHorizontalLine(line.id);
-    });
-  }, [horizontalLines, removeHorizontalLine]);
+    void clearAllHorizontalLines();
+  }, [clearAllHorizontalLines]);
 
-  // Hide context menu
+  // ── Context menu ────────────────────────────────────────────────────────────
   const hideContextMenu = useCallback(() => {
     setContextMenu((prev) => ({ ...prev, visible: false }));
+  }, []);
+
+  /**
+   * Right-click on chart: find the nearest horizontal line within 2% price
+   * tolerance and show the context menu for it.
+   */
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      if (!chartContainerRef.current || !candleSeriesRef.current) return;
+
+      const rect = chartContainerRef.current.getBoundingClientRect();
+      const y = e.clientY - rect.top;
+
+      const price = candleSeriesRef.current.coordinateToPrice(y);
+      if (price === null || price === undefined) return;
+
+      // Find the closest horizontal line
+      let closestLine: HorizontalLineData | null = null;
+      let minDistance = Infinity;
+      for (const line of horizontalLines) {
+        const dist = Math.abs(line.price - price);
+        if (dist < minDistance) {
+          minDistance = dist;
+          closestLine = line;
+        }
+      }
+
+      // Only show context menu when click is within 2 % of the line price
+      const tolerance = Math.abs(price) * 0.02;
+      if (closestLine && minDistance <= tolerance) {
+        setContextMenu({
+          visible: true,
+          position: { x: e.clientX - rect.left, y: e.clientY - rect.top },
+          line: closestLine,
+        });
+      }
+    },
+    [horizontalLines]
+  );
+
+  // ── Edit price modal ────────────────────────────────────────────────────────
+  const handleEditLine = useCallback((line: HorizontalLineData) => {
+    setEditModal({ visible: true, line, value: String(line.price) });
+  }, []);
+
+  const handleEditConfirm = useCallback(() => {
+    if (!editModal.line) return;
+    const newPrice = parseFloat(editModal.value);
+    if (!isNaN(newPrice) && newPrice > 0) {
+      handleUpdateLine(editModal.line.id, { price: newPrice });
+    }
+    setEditModal({ visible: false, line: null, value: '' });
+  }, [editModal, handleUpdateLine]);
+
+  const handleEditKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter') handleEditConfirm();
+      if (e.key === 'Escape')
+        setEditModal({ visible: false, line: null, value: '' });
+    },
+    [handleEditConfirm]
+  );
+
+  // ── Header callbacks (settings / close are Phase B) ────────────────────────
+  const handleSettingsClick = useCallback(() => {
+    // Phase B: open chart settings modal
+  }, []);
+
+  const handleCloseClick = useCallback(() => {
+    // Phase B: allow swapping chart symbol
   }, []);
 
   return (
@@ -356,7 +408,11 @@ export function TradingViewChart({
 
       {/* Chart Container */}
       <div className="flex-1 relative">
-        <div ref={chartContainerRef} className="w-full h-full" />
+        <div
+          ref={chartContainerRef}
+          className="w-full h-full"
+          onContextMenu={handleContextMenu}
+        />
 
         {/* Loading state */}
         {isLoading && (
@@ -413,7 +469,7 @@ export function TradingViewChart({
           </div>
         )}
 
-        {/* Click hint */}
+        {/* Shift+Click hint */}
         {!isLoading && !error && (
           <div
             className={`absolute bottom-2 left-2 text-xs px-2 py-1 rounded transition-opacity pointer-events-none ${
@@ -437,8 +493,8 @@ export function TradingViewChart({
             line={contextMenu.line}
             onClose={hideContextMenu}
             onEdit={(line) => {
-              // TODO: Implement edit price modal
-              console.log('Edit line:', line);
+              hideContextMenu();
+              handleEditLine(line);
             }}
             onChangeColor={(line, color) => {
               handleUpdateLine(line.id, { color });
@@ -447,6 +503,73 @@ export function TradingViewChart({
               handleRemoveLine(line.id);
             }}
           />
+        )}
+
+        {/* Edit Price Modal */}
+        {editModal.visible && editModal.line && (
+          <div
+            className="absolute inset-0 z-50 flex items-center justify-center"
+            style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
+            onClick={() =>
+              setEditModal({ visible: false, line: null, value: '' })
+            }
+          >
+            <div
+              className="rounded-lg shadow-xl p-4 w-64"
+              style={{
+                backgroundColor: 'var(--bg-secondary)',
+                border: '1px solid var(--border-color)',
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h4
+                className="text-sm font-semibold mb-3"
+                style={{ color: 'var(--text-primary)' }}
+              >
+                Edit Price Level
+              </h4>
+              <input
+                type="number"
+                step="any"
+                autoFocus
+                value={editModal.value}
+                onChange={(e) =>
+                  setEditModal((prev) => ({ ...prev, value: e.target.value }))
+                }
+                onKeyDown={handleEditKeyDown}
+                className="w-full px-3 py-2 text-sm rounded border focus:outline-none focus:ring-1 mb-3"
+                style={{
+                  backgroundColor: 'var(--bg-tertiary)',
+                  borderColor: 'var(--border-color)',
+                  color: 'var(--text-primary)',
+                }}
+              />
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() =>
+                    setEditModal({ visible: false, line: null, value: '' })
+                  }
+                  className="px-3 py-1.5 text-sm rounded transition-colors"
+                  style={{
+                    backgroundColor: 'var(--bg-tertiary)',
+                    color: 'var(--text-secondary)',
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleEditConfirm}
+                  className="px-3 py-1.5 text-sm rounded transition-colors"
+                  style={{
+                    backgroundColor: 'var(--accent-primary)',
+                    color: '#ffffff',
+                  }}
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>

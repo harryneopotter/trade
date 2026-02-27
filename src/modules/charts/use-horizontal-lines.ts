@@ -21,9 +21,9 @@ const DEFAULT_LINE_COLOR = '#f59e0b'; // amber-500
 const MAX_LINES_PER_SYMBOL = 10;
 
 /**
- * Hook for managing horizontal lines for a specific symbol
+ * Hook for managing horizontal lines for a specific symbol + timeframe
  */
-export function useHorizontalLines(symbol: string) {
+export function useHorizontalLines(symbol: string, timeframe: string) {
   const [lines, setLines] = useState<HorizontalLineData[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -36,7 +36,7 @@ export function useHorizontalLines(symbol: string) {
     setError(null);
 
     try {
-      const storedLines = await getLines(symbol);
+      const storedLines = await getLines(symbol, timeframe);
       const lineData: HorizontalLineData[] = storedLines.map((line) => ({
         id: line.id,
         price: line.price,
@@ -49,7 +49,7 @@ export function useHorizontalLines(symbol: string) {
     } finally {
       setIsLoading(false);
     }
-  }, [symbol]);
+  }, [symbol, timeframe]);
 
   // Load lines on mount and symbol change
   useEffect(() => {
@@ -73,6 +73,7 @@ export function useAddHorizontalLine() {
   const addHorizontalLine = useCallback(
     async (
       symbol: string,
+      timeframe: string,
       price: number,
       color?: string
     ): Promise<HorizontalLine | null> => {
@@ -80,7 +81,7 @@ export function useAddHorizontalLine() {
 
       try {
         // Check current line count
-        const currentLines = await getLines(symbol);
+        const currentLines = await getLines(symbol, timeframe);
         if (currentLines.length >= MAX_LINES_PER_SYMBOL) {
           console.warn(
             `Maximum ${MAX_LINES_PER_SYMBOL} lines allowed per symbol`
@@ -90,6 +91,7 @@ export function useAddHorizontalLine() {
 
         const newLine = await addLine(
           symbol,
+          timeframe,
           price,
           color || DEFAULT_LINE_COLOR
         );
@@ -193,6 +195,7 @@ export function useClearAllLines() {
  */
 export interface UseChartHorizontalLinesOptions {
   symbol: string;
+  timeframe: string;
   chart: IChartApi | null;
   candleSeries?: ISeriesApi<'Candlestick'> | null;
   candles: { time: number }[];
@@ -205,6 +208,7 @@ export interface UseChartHorizontalLinesOptions {
  */
 export function useChartHorizontalLines({
   symbol,
+  timeframe,
   chart,
   candleSeries,
   candles,
@@ -235,7 +239,7 @@ export function useChartHorizontalLines({
 
     setIsLoading(true);
     try {
-      const storedLines = await getLines(symbol);
+      const storedLines = await getLines(symbol, timeframe);
       const lineData: HorizontalLineData[] = storedLines.map((line) => ({
         id: line.id,
         price: line.price,
@@ -247,7 +251,7 @@ export function useChartHorizontalLines({
     } finally {
       setIsLoading(false);
     }
-  }, [symbol, enabled]);
+  }, [symbol, timeframe, enabled]);
 
   // Load lines on mount and symbol change
   useEffect(() => {
@@ -285,6 +289,7 @@ export function useChartHorizontalLines({
       try {
         const newLine = await addLine(
           symbol,
+          timeframe,
           price,
           color || DEFAULT_LINE_COLOR
         );
@@ -301,7 +306,7 @@ export function useChartHorizontalLines({
         return null;
       }
     },
-    [symbol, lines.length]
+    [symbol, timeframe, lines.length]
   );
 
   // Remove a line
@@ -339,19 +344,19 @@ export function useChartHorizontalLines({
     []
   );
 
-  // Clear all lines for the symbol
+  // Clear all lines for the symbol + timeframe
   const clearAllLines = useCallback(async (): Promise<boolean> => {
     if (!symbol) return false;
 
     try {
-      await removeAllLines(symbol);
+      await removeAllLines(symbol, timeframe);
       setLines([]);
       return true;
     } catch (err) {
       console.error('Failed to clear all lines:', err);
       return false;
     }
-  }, [symbol]);
+  }, [symbol, timeframe]);
 
   // Handle Shift+Click to add line
   const handleChartClick = useCallback(

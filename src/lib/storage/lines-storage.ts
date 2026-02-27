@@ -23,16 +23,21 @@ function getRandomColor(): string {
 }
 
 /**
- * Get all horizontal lines for a specific symbol
+ * Get all horizontal lines for a specific symbol and timeframe.
+ * Old records without a timeframe field are treated as belonging to '1h'.
  */
-export async function getLines(symbol: string): Promise<HorizontalLine[]> {
+export async function getLines(
+  symbol: string,
+  timeframe: string
+): Promise<HorizontalLine[]> {
   try {
     const db = await getDB();
     const symbolIndex = db
       .transaction('horizontalLines')
       .store.index('bySymbol');
-    const lines = await symbolIndex.getAll(symbol.toUpperCase());
-    // Sort by creation time (oldest first)
+    const all = await symbolIndex.getAll(symbol.toUpperCase());
+    // Filter by timeframe; legacy records (no timeframe) default to '1h'
+    const lines = all.filter((l) => (l.timeframe ?? '1h') === timeframe);
     return lines.sort((a, b) => a.createdAt - b.createdAt);
   } catch (error) {
     console.error(`Failed to get lines for ${symbol}:`, error);
@@ -41,11 +46,12 @@ export async function getLines(symbol: string): Promise<HorizontalLine[]> {
 }
 
 /**
- * Add a new horizontal line for a symbol
- * Returns the created line
+ * Add a new horizontal line for a symbol + timeframe.
+ * Returns the created line.
  */
 export async function addLine(
   symbol: string,
+  timeframe: string,
   price: number,
   color?: string
 ): Promise<HorizontalLine> {
@@ -55,13 +61,13 @@ export async function addLine(
     const newLine: HorizontalLine = {
       id: uuidv4(),
       symbol: symbol.toUpperCase(),
+      timeframe,
       price,
       color: color || getRandomColor(),
       createdAt: Date.now(),
     };
 
     await db.put('horizontalLines', newLine);
-    console.log(`Added line at ${price} for ${symbol}`);
     return newLine;
   } catch (error) {
     console.error(`Failed to add line for ${symbol}:`, error);
@@ -115,23 +121,28 @@ export async function removeLine(id: string): Promise<void> {
 }
 
 /**
- * Remove all horizontal lines for a specific symbol
+ * Remove all horizontal lines for a specific symbol + timeframe.
+ * If timeframe is omitted, removes all lines for the symbol regardless of timeframe.
  */
-export async function removeAllLines(symbol: string): Promise<void> {
+export async function removeAllLines(
+  symbol: string,
+  timeframe?: string
+): Promise<void> {
   try {
     const db = await getDB();
     const symbolIndex = db
       .transaction('horizontalLines')
       .store.index('bySymbol');
-    const lines = await symbolIndex.getAll(symbol.toUpperCase());
+    const all = await symbolIndex.getAll(symbol.toUpperCase());
+    const lines = timeframe
+      ? all.filter((l) => (l.timeframe ?? '1h') === timeframe)
+      : all;
 
     const tx = db.transaction('horizontalLines', 'readwrite');
     for (const line of lines) {
       await tx.store.delete(line.id);
     }
     await tx.done;
-
-    console.log(`Removed all lines for ${symbol}`);
   } catch (error) {
     console.error(`Failed to remove all lines for ${symbol}:`, error);
     throw new Error(`Failed to remove all lines for ${symbol}`);
