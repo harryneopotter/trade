@@ -12,6 +12,7 @@ import {
   removeLine,
   removeAllLines,
 } from '../../lib/storage/lines-storage';
+import { logger } from '../../lib/utils/logger';
 
 // Timeframe to minutes mapping for aggregation
 const TIMEFRAME_MINUTES: Record<Timeframe, number> = {
@@ -321,7 +322,7 @@ export function useChartData(
       }));
       setHorizontalLines(lineData);
     } catch (err) {
-      console.error('Failed to load horizontal lines:', err);
+      logger.error('Failed to load horizontal lines:', err);
     }
   }, [symbol, timeframe]);
 
@@ -339,7 +340,7 @@ export function useChartData(
         await addLine(symbol, timeframe, price, color);
         await loadHorizontalLines();
       } catch (err) {
-        console.error('Failed to add horizontal line:', err);
+        logger.error('Failed to add horizontal line:', err);
         setError('Failed to add horizontal line');
       }
     },
@@ -352,7 +353,7 @@ export function useChartData(
         await removeLine(id);
         await loadHorizontalLines();
       } catch (err) {
-        console.error('Failed to remove horizontal line:', err);
+        logger.error('Failed to remove horizontal line:', err);
         setError('Failed to remove horizontal line');
       }
     },
@@ -365,7 +366,7 @@ export function useChartData(
         await updateLine(id, updates);
         await loadHorizontalLines();
       } catch (err) {
-        console.error('Failed to update horizontal line:', err);
+        logger.error('Failed to update horizontal line:', err);
         setError('Failed to update horizontal line');
       }
     },
@@ -377,7 +378,7 @@ export function useChartData(
       await removeAllLines(symbol, timeframe);
       await loadHorizontalLines();
     } catch (err) {
-      console.error('Failed to clear all horizontal lines:', err);
+      logger.error('Failed to clear all horizontal lines:', err);
     }
   }, [symbol, timeframe, loadHorizontalLines]);
 

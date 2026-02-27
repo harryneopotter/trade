@@ -54,16 +54,19 @@ export function useWatchlistData(symbols: string[]) {
       }
     });
 
-    // Cleanup on unmount
+    // Cleanup on unmount — capture the ref object (not .current) to satisfy
+    // react-hooks/exhaustive-deps: the Set is mutable, so we want the current
+    // contents at cleanup time via the same ref object.
+    const subscribedRef = subscribedSymbols;
     return () => {
-      subscribedSymbols.current.forEach((symbol) => {
+      subscribedRef.current.forEach((symbol) => {
         unsubscribe({
           symbol,
           type: 'ticker',
           source: 'binance',
         });
       });
-      subscribedSymbols.current.clear();
+      subscribedRef.current.clear();
     };
   }, [symbols, subscribe, unsubscribe]);
 

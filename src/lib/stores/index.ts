@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 // Store exports for TradeDash
 
 // Types

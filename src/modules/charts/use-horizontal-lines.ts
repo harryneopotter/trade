@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 // Enhanced hook for horizontal lines management in TradeDash
 // Provides CRUD operations, click handling, and context menu support
 

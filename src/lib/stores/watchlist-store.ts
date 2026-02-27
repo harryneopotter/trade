@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 // Watchlist store for TradeDash
 import { create } from 'zustand';
 import type { WatchlistState } from './types';

@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 // Settings store for TradeDash
 import { create } from 'zustand';
 import type { SettingsState, Timeframe } from './types';

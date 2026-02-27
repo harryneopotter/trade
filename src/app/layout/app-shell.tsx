@@ -5,6 +5,7 @@ import { Header } from './header';
 import { Sidebar } from './sidebar';
 import { MainContent } from './main-content';
 import { useUIStore } from '../../lib/stores';
+import { ErrorBoundary } from '../components/error-boundary';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -19,7 +20,7 @@ interface AppShellProps {
 }
 
 export function AppShell({ children, className }: AppShellProps) {
-  const { sidebarOpen } = useUIStore();
+  const { sidebarOpen, connectionStatus } = useUIStore();
 
   return (
     <div
@@ -28,6 +29,32 @@ export function AppShell({ children, className }: AppShellProps) {
     >
       {/* Fixed header */}
       <Header className="flex-shrink-0" />
+
+      {/* Reconnection banner */}
+      {connectionStatus !== 'connected' && (
+        <div
+          className="flex-shrink-0 flex items-center justify-center gap-2 px-4 py-1.5 text-xs font-medium"
+          style={{
+            backgroundColor:
+              connectionStatus === 'reconnecting'
+                ? 'var(--accent-warning, #f59e0b)'
+                : 'var(--accent-danger)',
+            color: '#ffffff',
+          }}
+        >
+          {connectionStatus === 'reconnecting' ? (
+            <>
+              <span
+                className="w-3 h-3 border border-white border-t-transparent rounded-full animate-spin"
+                style={{ borderTopColor: 'transparent' }}
+              />
+              Reconnecting to market data…
+            </>
+          ) : (
+            'Disconnected — charts may be stale'
+          )}
+        </div>
+      )}
 
       {/* Main layout container */}
       <div className="flex flex-1 overflow-hidden relative">
@@ -41,7 +68,9 @@ export function AppShell({ children, className }: AppShellProps) {
             sidebarOpen && 'lg:ml-[240px]'
           )}
         >
-          <MainContent>{children}</MainContent>
+          <ErrorBoundary label="Main content">
+            <MainContent>{children}</MainContent>
+          </ErrorBoundary>
         </div>
       </div>
     </div>

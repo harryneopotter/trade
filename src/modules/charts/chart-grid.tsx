@@ -2,6 +2,7 @@
 
 import { useChartStore } from '../../lib/stores/chart-store';
 import { TradingViewChart } from './tradingview-chart';
+import { ErrorBoundary } from '../../app/components/error-boundary';
 
 /**
  * 2x2 grid layout for displaying 4 TradingView charts
@@ -28,13 +29,15 @@ export function ChartGrid() {
             gridRow: `${Math.floor(index / 2) + 1}`,
           }}
         >
-          <TradingViewChart
-            chartIndex={index}
-            symbol={chart.symbol}
-            timeframe={chart.timeframe}
-            showEMA9={chart.showEMA9}
-            showEMA21={chart.showEMA21}
-          />
+          <ErrorBoundary label={`Chart ${index + 1} (${chart.symbol})`}>
+            <TradingViewChart
+              chartIndex={index}
+              symbol={chart.symbol}
+              timeframe={chart.timeframe}
+              showEMA9={chart.showEMA9}
+              showEMA21={chart.showEMA21}
+            />
+          </ErrorBoundary>
         </div>
       ))}
     </div>

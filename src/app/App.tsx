@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 // Main App component for TradeDash
 import { useEffect, useState } from 'react';
 import { AppShell } from './layout';

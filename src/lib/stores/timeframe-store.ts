@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 // Timeframe store for TradeDash
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';

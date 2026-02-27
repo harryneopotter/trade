@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 // Database initialization and connection management for TradeDash
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
 import type {

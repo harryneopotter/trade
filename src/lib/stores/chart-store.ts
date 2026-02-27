@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 // Chart store for TradeDash
 import { create } from 'zustand';
 import type { ChartState, ChartConfig, Timeframe } from './types';

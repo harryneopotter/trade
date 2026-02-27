@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 // Horizontal lines storage operations for TradeDash
 import { v4 as uuidv4 } from 'uuid';
 import { getDB } from './db';

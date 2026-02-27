@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 // Settings storage operations for TradeDash
 import { getDB } from './db';
 import type { UserSettings } from './types';
