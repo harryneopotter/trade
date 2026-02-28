@@ -1,4 +1,5 @@
 // Individual watchlist item component
+import { memo } from 'react';
 import { useWatchlistStore } from '../../lib/stores';
 import type { WatchlistItemData } from './types';
 
@@ -37,9 +38,12 @@ function formatPercentage(percent: number): string {
   return `${sign}${percent.toFixed(2)}%`;
 }
 
-export function WatchlistItem({ data }: WatchlistItemProps) {
-  const { activeSymbol, setActiveSymbol, removeSymbol } = useWatchlistStore();
-  const isActive = activeSymbol === data.symbol;
+function WatchlistItemInner({ data }: WatchlistItemProps) {
+  // Granular selectors: each subscription only re-renders when its slice changes.
+  // isActive is a boolean comparison — only triggers re-render for this symbol.
+  const isActive = useWatchlistStore((s) => s.activeSymbol === data.symbol);
+  const setActiveSymbol = useWatchlistStore((s) => s.setActiveSymbol);
+  const removeSymbol = useWatchlistStore((s) => s.removeSymbol);
   const isPositive = data.priceChangePercent >= 0;
 
   const handleClick = () => {
@@ -144,3 +148,8 @@ export function WatchlistItem({ data }: WatchlistItemProps) {
     </div>
   );
 }
+
+// Memoize so only the item whose `data` reference changed re-renders on tick.
+// Combined with granular Zustand selectors above, clicking one item does NOT
+// cause all other items to re-render.
+export const WatchlistItem = memo(WatchlistItemInner);

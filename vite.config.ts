@@ -1,6 +1,7 @@
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
+import { visualizer } from 'rollup-plugin-visualizer';
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -17,6 +18,16 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    // Bundle size report written to dist/bundle-stats.html after every build.
+    // Open it in a browser after `pnpm build` to inspect chunk sizes.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    visualizer({
+      filename: 'dist/bundle-stats.html',
+      open: false,
+      gzipSize: true,
+      brotliSize: true,
+      template: 'treemap',
+    }) as any,
     VitePWA({
       registerType: 'autoUpdate',
       manifest: {

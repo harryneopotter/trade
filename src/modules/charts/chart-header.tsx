@@ -1,6 +1,6 @@
 // Chart header component for TradeDash
 
-import { useMemo, useState, useRef, useEffect } from 'react';
+import { memo, useMemo, useState, useRef, useEffect, useCallback } from 'react';
 import type { Timeframe } from '../../lib/stores/types';
 import { CompactIndicatorsPanel } from '../indicators';
 import { LineControls, LineControlsButton } from './line-controls';
@@ -48,9 +48,11 @@ function formatPriceChange(change: number): string {
 }
 
 /**
- * Chart header showing symbol, timeframe, price, and controls
+ * Chart header showing symbol, timeframe, price, and controls.
+ * Memoized so that parent re-renders caused by canvas/candle updates don't
+ * propagate here when price/symbol props are unchanged.
  */
-export function ChartHeader({
+function ChartHeaderInner({
   symbol,
   timeframe,
   chartIndex,
@@ -126,13 +128,13 @@ export function ChartHeader({
     return symbol;
   }, [symbol]);
 
-  const toggleIndicators = () => {
+  const toggleIndicators = useCallback(() => {
     setShowIndicators((prev) => !prev);
-  };
+  }, []);
 
-  const toggleLineControls = () => {
+  const toggleLineControls = useCallback(() => {
     setShowLineControls((prev) => !prev);
-  };
+  }, []);
 
   return (
     <div
@@ -305,3 +307,5 @@ export function ChartHeader({
     </div>
   );
 }
+
+export const ChartHeader = memo(ChartHeaderInner);
