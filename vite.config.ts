@@ -20,7 +20,7 @@ export default defineConfig({
     react(),
     // Bundle size report written to dist/bundle-stats.html after every build.
     // Open it in a browser after `pnpm build` to inspect chunk sizes.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     visualizer({
       filename: 'dist/bundle-stats.html',
       open: false,
