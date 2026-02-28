@@ -52,9 +52,7 @@ describe('DataService.calculateEMA', () => {
   it('EMA 9 reacts faster than EMA 21 to a price jump', () => {
     // Flat series then a spike
     const flat = Array.from({ length: 50 }, () => makeCandle({ close: 100 }));
-    const spike = Array.from({ length: 10 }, () =>
-      makeCandle({ close: 200 })
-    );
+    const spike = Array.from({ length: 10 }, () => makeCandle({ close: 200 }));
     const candles = [...flat, ...spike];
 
     const ema9 = DataService.calculateEMA(candles, 9);
@@ -108,11 +106,11 @@ describe('DataService.aggregateCandles', () => {
     expect(result).toHaveLength(1);
 
     const agg = result[0];
-    expect(agg.open).toBe(100);        // first open
-    expect(agg.close).toBe(107);       // last close (104 + 3)
-    expect(agg.high).toBe(113);        // max high (110 + 3)
-    expect(agg.low).toBe(90);          // min low (90 + 0)
-    expect(agg.volume).toBe(400);      // summed volume
+    expect(agg.open).toBe(100); // first open
+    expect(agg.close).toBe(107); // last close (104 + 3)
+    expect(agg.high).toBe(113); // max high (110 + 3)
+    expect(agg.low).toBe(90); // min low (90 + 0)
+    expect(agg.volume).toBe(400); // summed volume
   });
 });
 

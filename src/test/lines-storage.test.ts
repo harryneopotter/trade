@@ -6,10 +6,12 @@ const store = new Map<string, object>();
 
 vi.mock('../lib/storage/db', () => ({
   getDB: vi.fn().mockResolvedValue({
-    put: vi.fn().mockImplementation((_storeName: string, value: { id: string }) => {
-      store.set(value.id, value);
-      return Promise.resolve(value.id);
-    }),
+    put: vi
+      .fn()
+      .mockImplementation((_storeName: string, value: { id: string }) => {
+        store.set(value.id, value);
+        return Promise.resolve(value.id);
+      }),
     get: vi.fn().mockImplementation((_storeName: string, id: string) => {
       return Promise.resolve(store.get(id));
     }),
@@ -20,13 +22,15 @@ vi.mock('../lib/storage/db', () => ({
     transaction: vi.fn().mockImplementation(() => ({
       store: {
         index: vi.fn().mockReturnValue({
-          getAll: vi.fn().mockImplementation((symbol: string) =>
-            Promise.resolve(
-              Array.from(store.values()).filter(
-                (v: object) => (v as { symbol: string }).symbol === symbol
+          getAll: vi
+            .fn()
+            .mockImplementation((symbol: string) =>
+              Promise.resolve(
+                Array.from(store.values()).filter(
+                  (v: object) => (v as { symbol: string }).symbol === symbol
+                )
               )
-            )
-          ),
+            ),
         }),
         delete: vi.fn().mockImplementation((id: string) => {
           store.delete(id);
@@ -61,7 +65,7 @@ describe('lines-storage', () => {
   it('getLines filters by symbol and timeframe', async () => {
     await addLine('BTCUSDT', '1h', 50000);
     await addLine('BTCUSDT', '4h', 51000); // different timeframe
-    await addLine('ETHUSDT', '1h', 3000);  // different symbol
+    await addLine('ETHUSDT', '1h', 3000); // different symbol
 
     const lines1h = await getLines('BTCUSDT', '1h');
     expect(lines1h).toHaveLength(1);
